@@ -1,10 +1,9 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import Button from "@/components/atoms/form/Button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import ErrorMessage from "@/components/atoms/form/Error";
 import {
   Select,
@@ -14,13 +13,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { signup } from "@/hooks/useAuth";
-import { sendOtp } from "@/lib/services/emails/emailVerification";
-import Modal from "@/components/molecules/Modal";
-import {
-  InputOTP,
-  InputOTPGroup,
-  InputOTPSlot,
-} from "@/components/ui/input-otp";
 import { toast } from "sonner";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -34,11 +26,16 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 
+import PasswordStrength from "@/components/atoms/form/PasswordStrength";
+import { PASSWORD_MAX, refinePassword } from "@/lib/validation/password";
+
 const signupSchema = z
   .object({
     name: z.string().min(1, "Full name is required").max(100, "Name is too long"),
     email: z.string().min(1, "Email is required").email("Invalid email address"),
-    password: z.string().min(6, "Password must be at least 6 characters"),
+    // Length is bounded here so the field errors before refinePassword runs;
+    // the strength rules themselves live in lib/validation/password.js.
+    password: z.string().min(1, "Password is required").max(PASSWORD_MAX),
     confirmPassword: z.string().min(1, "Please confirm your password"),
     role: z.string().min(1, "Please select a role"),
   })
@@ -47,59 +44,65 @@ const signupSchema = z
     path: ["confirmPassword"],
   });
 
+const signupSchemaWithPolicy = refinePassword(signupSchema);
+
 export function SignupForm({ className, ...props }) {
-  const router = useRouter();
-  const [otp, setOtp] = useState("");
-  const [otpLoading, setOtpLoading] = useState(false);
   const [error, setError] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
-  const correctOtpRef = useRef(null);
+  const [registered, setRegistered] = useState(false);
+  const [registeredEmail, setRegisteredEmail] = useState("");
+  const [registeredRole, setRegisteredRole] = useState("");
 
   const form = useForm({
-    resolver: zodResolver(signupSchema),
+    resolver: zodResolver(signupSchemaWithPolicy),
     defaultValues: { name: "", email: "", password: "", confirmPassword: "", role: "" },
+    mode: "onChange",
   });
+
+  // The meter's "doesn't contain your name or email" check needs the live
+  // values of those fields, not the submitted ones.
+  const watchedName = form.watch("name");
+  const watchedEmail = form.watch("email");
 
   const handleSignup = async (data) => {
     setError("");
 
     try {
       await signup(data.name, data.email, data.password, data.role);
-      toast.success("Signup successful! Redirecting to dashboard...");
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 1500);
+      setRegisteredEmail(data.email);
+      setRegisteredRole(data.role);
+      setRegistered(true);
     } catch (err) {
       setError(err?.message || "Signup failed. Please try again.");
       toast.error(err?.message || "Signup failed. Please try again.");
     }
   };
 
-  useEffect(() => {
-    if (otp.length === 6 && correctOtpRef.current) {
-      handleVerifyOtpAndSignup();
-    }
-  }, [otp]);
-
-  const handleResendOtp = async () => {
-    setOtpLoading(true);
-    setError("");
-    const email = form.getValues("email");
-    try {
-      const res = await sendOtp(email);
-      if (res && res.otp) {
-        correctOtpRef.current = res.otp;
-        toast.success("New OTP sent to your email!");
-      } else {
-        throw new Error("Failed to send OTP");
-      }
-    } catch (err) {
-      setError(err?.message || "Failed to send OTP. Please try again.");
-      toast.error("Failed to send OTP. Please try again.");
-    } finally {
-      setOtpLoading(false);
-    }
-  };
+  if (registered) {
+    return (
+      <div className="flex flex-col items-center gap-4 text-center py-8">
+        <div className="w-16 h-16 bg-accent/10 rounded-full flex items-center justify-center">
+          <svg className="w-8 h-8 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <h2 className="text-xl font-bold">Check your email</h2>
+        <p className="text-sm text-muted-foreground max-w-sm">
+          We sent a verification link to <strong>{registeredEmail}</strong>.
+          Click the link to activate your account.
+        </p>
+        {registeredRole === "mentor" && (
+          <p className="text-xs text-muted-foreground max-w-sm rounded-lg border border-border bg-muted/40 px-4 py-3">
+            As an educator, you will be guided through a quick identity
+            verification step after confirming your email. This is required
+            before your application can be reviewed.
+          </p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Didn&apos;t receive it? Check your spam folder.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -138,6 +141,11 @@ export function SignupForm({ className, ...props }) {
                 <FormLabel>Password</FormLabel>
                 <FormControl><Input type="password" placeholder="********" {...field} /></FormControl>
                 <FormMessage />
+                <PasswordStrength
+                  password={field.value}
+                  name={watchedName}
+                  email={watchedEmail}
+                />
               </FormItem>
             )} />
             <FormField control={form.control} name="confirmPassword" render={({ field }) => (
@@ -152,13 +160,12 @@ export function SignupForm({ className, ...props }) {
                 <FormLabel>Role</FormLabel>
                 <FormControl>
                   <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger className="w-[180px]">
+                    <SelectTrigger className="w-[180px]" aria-label="Role">
                       <SelectValue placeholder="Role" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="student">Student</SelectItem>
-                      <SelectItem value="tutor">Tutor</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="mentor">Educator</SelectItem>
                     </SelectContent>
                   </Select>
                 </FormControl>

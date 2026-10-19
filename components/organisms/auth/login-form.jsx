@@ -2,6 +2,7 @@
 
 import { login } from "@/hooks/useAuth";
 import { useStellarAuth } from "@/hooks/useStellarAuth";
+import { normalizeRole, ROLES } from "@/lib/auth/roles";
 import Button from "@/components/atoms/form/Button";
 import { Input } from "@/components/ui/input";
 import {
@@ -59,10 +60,11 @@ export function LoginForm({ className, ...props }) {
 
   const handleSubmit = async (data) => {
     try {
-      await login(data.email, data.password);
+      const user = await login(data.email, data.password);
 
       setTimeout(() => {
-        window.location.href = "/dashboard";
+        window.location.href =
+          normalizeRole(user?.role) === ROLES.ADMIN ? "/admin" : "/dashboard";
       }, 500);
     } catch {
       // login() already shows toast on failure
@@ -74,7 +76,8 @@ export function LoginForm({ className, ...props }) {
       const result = await loginWithStellar();
       if (result && !result.unregistered) {
         setTimeout(() => {
-          window.location.href = "/dashboard";
+          window.location.href =
+            normalizeRole(result?.role) === ROLES.ADMIN ? "/admin" : "/dashboard";
         }, 500);
       }
     } catch {
@@ -142,13 +145,13 @@ export function LoginForm({ className, ...props }) {
                 <FormItem>
                   <div className="flex items-center">
                     <FormLabel>Password</FormLabel>
-                    <a
-                      href="#"
+                    <button
+                      type="button"
                       onClick={handleForgetPassword}
                       className="ml-auto inline-block text-sm underline-offset-4 hover:underline"
                     >
                       Forgot your password?
-                    </a>
+                    </button>
                   </div>
                   <FormControl>
                     <Input
